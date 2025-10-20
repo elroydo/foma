@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foma • Paste + Excel → Aligned Output</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ["Inter","system-ui","-apple-system","Segoe UI","Roboto","Ubuntu","Cantarell","Noto Sans","Helvetica Neue","Arial","sans-serif"] }}}}
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    .dropzone { border: 2px dashed rgb(203 213 225); border-radius: 1rem; }
+    .dropzone.dragover { border-color: rgb(59 130 246); background: rgb(239 246 255); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 1024px) { .grid-2 { grid-template-columns: 1fr; } }
+    .table-wrap { max-height: 50vh; overflow: auto; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .pass { color: #047857; }
+    .fail { color: #b91c1c; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-6 space-y-6">
+    <header class="flex items-center justify-between">
+      <h1 class="text-2xl font-semibold">Foma</h1>
+    </header>
+
+    <section class="grid-2">
+      <!-- Left: Input data -->
+      <div class="space-y-3">
+        <h2 class="font-medium">1. Paste your input data</h2>
+        <p class="text-sm text-slate-600">Paste CSV, TSV, or a simple list. If there is no header, the first column will be treated as <span class="font-semibold">FourthID</span>.</p>
+        <textarea id="inputTextarea" class="w-full h-48 rounded-xl p-3 border border-slate-200 bg-white mono" placeholder="A simple list separated by line breaks"></textarea>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="block text-sm text-slate-600">Input delimiter</label>
+            <select id="inputDelimiter" class="w-full rounded-lg border border-slate-200 p-2 bg-white">
+              <option value="auto" selected>Auto detect</option>
+              <option value=",">Comma</option>
+              <option value="\t">Tab</option>
+              <option value=";">Semicolon</option>
+              <option value="|">Pipe</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-600">Input FourthID column</label>
+            <select id="inputFourthCol" class="w-full rounded-lg border border-slate-200 p-2 bg-white">
+              <option value="auto" selected>Auto</option>
+            </select>
+          </div>
+          <div class="flex gap-2">
+            <button id="parseInputBtn" class="px-4 py-2 rounded-lg bg-slate-900 text-white">Parse input</button>
+            <button id="clearInputBtn" class="px-4 py-2 rounded-lg bg-slate-200">Clear</button>
+          </div>
+        </div>
+        <div id="inputPreview" class="text-sm text-slate-600"></div>
+      </div>
+
+      <!-- Right: Excel file -->
+      <div class="space-y-3">
+        <h2 class="font-medium">2. Drop your Excel file</h2>
+        <p class="text-sm text-slate-600">The worksheet must include a column that contains the matching values for <span class="font-semibold">FourthID</span>.</p>
+        <div id="dropzone" class="dropzone p-6 bg-white flex flex-col items-center justify-center text-slate-600">
+          <div class="text-center">
+            <div class="text-sm">Drop .xlsx or .xls here</div>
+            <div class="text-xs">or click to select</div>
+          </div>
+          <input id="fileInput" type="file" accept=".xlsx,.xls" class="hidden" />
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="block text-sm text-slate-600">Worksheet</label>
+            <select id="sheetSelect" class="w-full rounded-lg border border-slate-200 p-2 bg-white"></select>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-600">Upload FourthID column</label>
+            <select id="uploadFourthCol" class="w-full rounded-lg border border-slate-200 p-2 bg-white"></select>
+          </div>
+          <div>
+            <button id="useThisSheetBtn" class="px-4 py-2 rounded-lg bg-slate-900 text-white w-full">Use selected sheet</button>
+          </div>
+        </div>
+        <div id="uploadPreview" class="text-sm text-slate-600"></div>
+      </div>
+    </section>
+
+    <section class="space-y-3">
+      <h2 class="font-medium">3. Match</h2>
+      <p class="text-sm text-slate-600">We will align the upload to your input order. If a FourthID from your input is not found in the upload, the upload fields will be left blank.</p>
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
+        <label class="flex items-center gap-2 text-sm"><input id="optDedup" type="checkbox" class="rounded" checked> Deduplicate input (keep first)</label>
+        <label class="flex items-center gap-2 text-sm"><input id="optKeepDigits" type="checkbox" class="rounded" checked> Keep digits only</label>
+        <label class="flex items-center gap-2 text-sm"><input id="optStripZeros" type="checkbox" class="rounded"> Strip leading zeros</label>
+        <label class="flex items-center gap-2 text-sm"><input id="optTrimSpaces" type="checkbox" class="rounded" checked> Trim spaces</label>
+      </div>
+      <div class="flex flex-wrap gap-3 mt-2">
+        <button id="matchBtn" class="px-4 py-2 rounded-lg bg-emerald-600 text-white">Run match</button>
+        <button id="downloadXlsxBtn" class="px-4 py-2 rounded-lg bg-slate-900 text-white" disabled>Download XLSX</button>
+        <button id="downloadCsvBtn" class="px-4 py-2 rounded-lg bg-slate-200" disabled>Download CSV</button>
+      </div>
+      <div id="resultInfo" class="text-sm text-slate-600"></div>
+      <div class="table-wrap bg-white rounded-xl border border-slate-200">
+        <table id="resultTable" class="min-w-full text-sm">
+          <thead class="sticky top-0 bg-slate-100"></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="space-y-2">
+      <h2 class="font-medium">4. Built in tests</h2>
+      <p class="text-sm text-slate-600">Use this to sanity check matching without a real file. It loads a mock sheet and runs assertions.</p>
+      <div class="flex flex-wrap gap-3">
+        <button id="loadTestUploadBtn" class="px-3 py-2 rounded-lg bg-slate-200">Load test upload</button>
+        <button id="runTestsBtn" class="px-3 py-2 rounded-lg bg-slate-900 text-white">Run tests</button>
+      </div>
+      <pre id="testOutput" class="mono text-sm p-3 bg-white rounded-xl border border-slate-200 whitespace-pre-wrap"></pre>
+    </section>
+
+    <!-- Footer -->
+    <footer class="text-xs text-slate-500 dark:text-slate-500 pt-2 pb-8">
+        <p>Foma v0.1 • © 2025 elroydr</p>
+    </footer>
+  </div>
+
+  <script>
+    // State containers
+    let inputRows = [];          // Array of objects from pasted input
+    let inputColumns = [];       // Header list for input
+    let inputFourthKey = 'FourthID';
+
+    let workbook = null;         // XLSX workbook
+    let uploadSheets = [];       // Sheet names
+    let uploadRows = [];         // Active sheet rows as objects
+    let uploadColumns = [];      // Header list for upload
+    let uploadFourthKey = 'FourthID';
+
+    let resultRows = [];         // Matched rows
+
+    // Helpers
+    const byId = id => document.getElementById(id);
+
+    function normaliseId(val) {
+      const keepDigits = byId('optKeepDigits') ? byId('optKeepDigits').checked : true;
+      const stripZeros = byId('optStripZeros') ? byId('optStripZeros').checked : false;
+      const trimSpaces = byId('optTrimSpaces') ? byId('optTrimSpaces').checked : true;
+      let s = val == null ? '' : String(val);
+      if (trimSpaces) s = s.trim();
+      if (keepDigits) {
+        let out = '';
+        for (let i = 0; i < s.length; i++) {
+          const code = s.charCodeAt(i);
+          if (code >= 48 && code <= 57) out += s[i];
+        }
+        s = out;
+      }
+      if (stripZeros) {
+        let j = 0; while (j < s.length && s[j] === '0') j++;
+        s = s.slice(j);
+      }
+      return s;
+    }
+
+    function detectDelimiter(text) {
+      if (byId('inputDelimiter').value !== 'auto') return byId('inputDelimiter').value;
+      // Count common delimiters on first non empty line
+      const line = (text.split(/\r?\n/).find(l => l.trim().length) || '').trim();
+      const counts = { ',': (line.match(/,/g)||[]).length, '\t': (line.match(/\t/g)||[]).length, ';': (line.match(/;/g)||[]).length, '|': (line.match(/\|/g)||[]).length };
+      const best = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+      return best && best[1] > 0 ? best[0] : null;
+    }
+
+    function parseDelimited(text, delim) {
+      const rows = [];
+      const lines = text.split(/\r?\n/).filter(l => l.length);
+      for (const ln of lines) {
+        const parts = delim ? ln.split(delim) : [ln];
+        rows.push(parts.map(s => s.replace(/^\s+|\s+$/g, '')));
+      }
+      return rows;
+    }
+
+    function toObjects(rows) {
+      if (!rows.length) return { columns: [], objects: [] };
+      const hasHeader = rows[0].length > 1 || /[A-Za-z]/.test(rows[0][0]);
+      let columns, startIdx;
+      if (hasHeader && rows.length > 1) { columns = rows[0]; startIdx = 1; }
+      else { columns = ['FourthID']; startIdx = 0; }
+      const objects = [];
+      for (let i = startIdx; i < rows.length; i++) {
+        const row = rows[i];
+        const obj = {};
+        for (let c = 0; c < columns.length; c++) {
+          obj[columns[c] || `Col${c+1}`] = row[c] ?? '';
+        }
+        objects.push(obj);
+      }
+      return { columns, objects };
+    }
+
+    function renderPreview(el, rows, columns, label) {
+      const count = rows.length;
+      const cols = columns.length;
+      if (!count) { el.innerHTML = ''; return; }
+      const sampleKeys = rows.slice(0, 3).map(r => normaliseId(r[inputFourthKey] ?? '')).join(', ');
+      const tailKeys = rows.slice(-2).map(r => normaliseId(r[inputFourthKey] ?? '')).join(', ');
+      el.innerHTML = `${label}: ${count} rows, ${cols} columns. FourthID sample → [${sampleKeys}${count>5?' … ':''}${count>4?tailKeys:''}]`;
+    }
+
+    function setSelectOptions(selectEl, options, selected) {
+      selectEl.innerHTML = options.map(o => `<option value="${o}">${o}</option>`).join('');
+      const choice = options.includes(selected) ? selected : options[0] || '';
+      selectEl.value = choice;
+    }
+
+    function buildMap(rows, key) {
+      const m = new Map();
+      for (const r of rows) {
+        const raw = r[key];
+        const k = normaliseId(raw);
+        if (!k) continue;
+        if (!m.has(k)) m.set(k, r);
+      }
+      return m;
+    }
+
+    function renderTable(rows) {
+      const thead = byId('resultTable').querySelector('thead');
+      const tbody = byId('resultTable').querySelector('tbody');
+      if (!rows.length) { thead.innerHTML = ''; tbody.innerHTML = ''; return; }
+      const columns = Object.keys(rows[0]);
+      thead.innerHTML = `<tr>${columns.map(c=>`<th class="text-left p-2 border-b border-slate-200 bg-slate-100 sticky top-0">${c}</th>`).join('')}</tr>`;
+      tbody.innerHTML = rows.map(r => `<tr>${columns.map(c=>`<td class="p-2 border-b border-slate-100">${escapeHtml(String(r[c] ?? ''))}</td>`).join('')}</tr>`).join('');
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+    }
+
+    function downloadCSV(filename, rows) {
+      if (!rows.length) return;
+      const cols = Object.keys(rows[0]);
+      const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => csvCell(r[c])).join(','))).join("\r\n");
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
+
+    function csvCell(v) {
+      if (v == null) return '';
+      const s = String(v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+      return s;
+    }
+
+    function downloadXLSX(filename, rows) {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Matched');
+      XLSX.writeFile(wb, filename);
+    }
+
+    // Input handlers
+    byId('parseInputBtn').addEventListener('click', () => {
+      const text = byId('inputTextarea').value.trim();
+      if (!text) { inputRows = []; inputColumns = []; renderPreview(byId('inputPreview'), inputRows, inputColumns, ''); setSelectOptions(byId('inputFourthCol'), ['FourthID'], 'FourthID'); return; }
+      const delim = detectDelimiter(text);
+      const rows = parseDelimited(text, delim);
+      const { columns, objects } = toObjects(rows);
+      inputRows = objects;
+      inputColumns = columns.map(c => c || '');
+      // update input FourthID selector
+      const guess = columns.find(c => /^fourth\s*id$/i.test(c)) || columns[0] || 'FourthID';
+      setSelectOptions(byId('inputFourthCol'), columns.length ? columns : ['FourthID'], guess);
+      inputFourthKey = byId('inputFourthCol').value;
+      renderPreview(byId('inputPreview'), inputRows, inputColumns, 'Input parsed');
+    });
+
+    byId('inputFourthCol').addEventListener('change', e => { inputFourthKey = e.target.value; });
+
+    byId('clearInputBtn').addEventListener('click', () => {
+      byId('inputTextarea').value = '';
+      inputRows = []; inputColumns = []; inputFourthKey = 'FourthID';
+      setSelectOptions(byId('inputFourthCol'), ['FourthID'], 'FourthID');
+      renderPreview(byId('inputPreview'), [], [], '');
+    });
+
+    // Dropzone handlers
+    const dz = byId('dropzone');
+    dz.addEventListener('click', () => byId('fileInput').click());
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault(); dz.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+    byId('fileInput').addEventListener('change', e => {
+      if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const data = new Uint8Array(e.target.result);
+        workbook = XLSX.read(data, { type: 'array' });
+        uploadSheets = workbook.SheetNames || [];
+        setSelectOptions(byId('sheetSelect'), uploadSheets, uploadSheets[0] || '');
+        byId('uploadPreview').textContent = uploadSheets.length ? `Workbook loaded. ${uploadSheets.length} sheet(s).` : 'No sheets found.';
+        loadActiveSheet();
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function loadActiveSheet() {
+      const sheetName = byId('sheetSelect').value;
+      if (!workbook || !sheetName) return;
+      const ws = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      uploadRows = json;
+      // columns from headers
+      uploadColumns = inferColumnsFromSheet(ws, json);
+      const guess = uploadColumns.find(c => /^fourth\s*id$/i.test(c)) || uploadColumns[0] || 'FourthID';
+      setSelectOptions(byId('uploadFourthCol'), uploadColumns.length ? uploadColumns : ['FourthID'], guess);
+      uploadFourthKey = byId('uploadFourthCol').value;
+      renderPreview(byId('uploadPreview'), uploadRows, uploadColumns, 'Sheet parsed');
+    }
+
+    function inferColumnsFromSheet(ws, json) {
+      // Try header row from sheet first
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const headerRow = range ? range.s.r : 0;
+      const headers = [];
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cell = ws[XLSX.utils.encode_cell({ r: headerRow, c: C })];
+        const v = cell && cell.v != null ? String(cell.v) : '';
+        headers.push(v || `Col${C+1}`);
+      }
+      // Fallback to keys of first object
+      if (!headers.some(h => h)) {
+        return json.length ? Object.keys(json[0]) : [];
+      }
+      return headers;
+    }
+
+    byId('sheetSelect').addEventListener('change', loadActiveSheet);
+    byId('uploadFourthCol').addEventListener('change', e => { uploadFourthKey = e.target.value; });
+    byId('useThisSheetBtn').addEventListener('click', loadActiveSheet);
+
+    // Match
+    byId('matchBtn').addEventListener('click', () => {
+      if (!inputRows.length) { alert('Parse your input first.'); return; }
+      if (!uploadRows.length) { alert('Load your Excel sheet first.'); return; }
+
+      // Optional dedupe on input by normalised FourthID
+      let inRows = inputRows;
+      const dedup = byId('optDedup') ? byId('optDedup').checked : true;
+      if (dedup) {
+        const seen = new Set();
+        inRows = inputRows.filter(r => {
+          const k = normaliseId(r[inputFourthKey] ?? '');
+          if (!k) return true; // keep blanks to preserve alignment
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+
+      const inputMapCols = new Set(Object.keys(inRows[0] || {}));
+      const outCols = [];
+      const inputPref = [...new Set(['FourthID', ...inputColumns.filter(Boolean)])].filter(c => inputMapCols.has(c));
+      for (const c of inputPref) outCols.push(`Input.${c}`);
+      for (const c of uploadColumns) outCols.push(`Upload.${c}`);
+
+      const uploadMap = buildMap(uploadRows, uploadFourthKey);
+
+      let found = 0, missing = 0;
+      resultRows = inRows.map(r => {
+        const keyRaw = r[inputFourthKey] ?? '';
+        const keyN = normaliseId(keyRaw);
+        const match = uploadMap.get(keyN);
+        if (keyN && match) found++; else missing++;
+        const out = {};
+        for (const c of inputPref) out[`Input.${c}`] = r[c] ?? '';
+        for (const c of uploadColumns) out[`Upload.${c}`] = match ? (match[c] ?? '') : '';
+        return out;
+      });
+
+      byId('resultInfo').textContent = `${resultRows.length} rows aligned. Matches: ${found}. Missing: ${missing}.`;
+      renderTable(resultRows);
+      byId('downloadXlsxBtn').disabled = !resultRows.length;
+      byId('downloadCsvBtn').disabled = !resultRows.length;
+    });
+
+    byId('downloadCsvBtn').addEventListener('click', () => downloadCSV('fourthid_matched.csv', resultRows));
+    byId('downloadXlsxBtn').addEventListener('click', () => downloadXLSX('fourthid_matched.xlsx', resultRows));
+
+    // ---------- Test helpers ----------
+    function setUploadFromJson(rows) {
+      uploadRows = rows;
+      uploadColumns = rows.length ? Object.keys(rows[0]) : [];
+      setSelectOptions(byId('uploadFourthCol'), uploadColumns.length ? uploadColumns : ['FourthID'], uploadColumns.find(c => /^fourth\s*id$/i.test(c)) || uploadColumns[0] || 'FourthID');
+      uploadFourthKey = byId('uploadFourthCol').value;
+      renderPreview(byId('uploadPreview'), uploadRows, uploadColumns, 'Mock sheet loaded');
+    }
+
+    byId('loadTestUploadBtn').addEventListener('click', () => {
+      // Simple mock sheet with a few tricky values
+      setUploadFromJson([
+        { FourthID: '111111111', Name: 'A' },
+        { FourthID: ' 222222222 ', Name: 'B' },
+        { FourthID: 'ID:33333333', Name: 'C' },
+        { FourthID: '00444444444', Name: 'D' },
+        { FourthID: '555555555', Name: 'E' },
+        { FourthID: '666666666', Name: 'F' }
+      ]);
+    });
+
+    byId('runTestsBtn').addEventListener('click', runTests);
+
+    function runTests() {
+      const out = [];
+      function log(ok, msg) { out.push(`${ok ? '✔' : '✘'} ${msg}`); }
+      function equal(a,b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+      // Test 1: exact match list
+      byId('inputTextarea').value = ['111111111','222222222','33333333','444444444','555555555','666666666'].join('\n');
+      byId('parseInputBtn').click();
+      setUploadFromJson([
+        { FourthID: '111111111', X: 1 },
+        { FourthID: '222222222', X: 2 },
+        { FourthID: '33333333', X: 3 },
+        { FourthID: '444444444', X: 4 },
+        { FourthID: '555555555', X: 5 },
+        { FourthID: '666666666', X: 6 }
+      ]);
+      byId('optKeepDigits').checked = true;
+      byId('optTrimSpaces').checked = true;
+      byId('optStripZeros').checked = false;
+      byId('matchBtn').click();
+      log(resultRows.length === 6, 'Test 1 length 6');
+      log(resultRows.filter(r => r['Upload.X']).length === 6, 'Test 1 all matched');
+
+      // Test 2: messy upload values
+      byId('inputTextarea').value = ['111111111','222222222','33333333','444444444','555555555','666666666'].join('\n');
+      byId('parseInputBtn').click();
+      setUploadFromJson([
+        { FourthID: '111111111', X: 'ok' },
+        { FourthID: ' 222222222 ', X: 'ok' },
+        { FourthID: 'ID:33333333', X: 'ok' },
+        { FourthID: '00444444444', X: 'ok' },
+        { FourthID: '555555555', X: 'ok' },
+        { FourthID: '666666666', X: 'ok' }
+      ]);
+      byId('optKeepDigits').checked = true;
+      byId('optTrimSpaces').checked = true;
+      byId('optStripZeros').checked = true; // strips the 00 for 00444444444
+      byId('matchBtn').click();
+      const m2 = resultRows.filter(r => r['Upload.X'] === 'ok').length;
+      log(m2 === 6, `Test 2 messy values normalised to 6 matches, got ${m2}`);
+
+      // Test 3: duplicates in input are deduped by default
+      byId('inputTextarea').value = ['111111111','111111111','222222222'].join('\n');
+      byId('parseInputBtn').click();
+      setUploadFromJson([{ FourthID: '111111111' }, { FourthID: '222222222' }]);
+      byId('optDedup').checked = true;
+      byId('matchBtn').click();
+      log(resultRows.length === 2, 'Test 3 dedupe keeps first only');
+
+      // Test 4: turn off dedupe keeps both and both match
+      byId('optDedup').checked = false;
+      byId('matchBtn').click();
+      log(resultRows.length === 3, 'Test 4 no dedupe keeps 3 rows');
+
+      // Test 5: missing value stays blank
+      byId('inputTextarea').value = ['999999'].join('\n');
+      byId('parseInputBtn').click();
+      setUploadFromJson([{ FourthID: '111111111', Z: 'present' }]);
+      byId('optDedup').checked = true;
+      byId('matchBtn').click();
+      const z = resultRows[0];
+      log(z && !z['Upload.Z'], 'Test 5 missing match leaves upload fields blank');
+
+      byId('testOutput').textContent = out.map(s => s.replace(/^✔/,'✔')).join('\n');
+    }
+  </script>
+</body>
+</html>
